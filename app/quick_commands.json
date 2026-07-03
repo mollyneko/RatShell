@@ -1,0 +1,19 @@
+{
+  "groups": [
+    {
+      "name": "RAT",
+      "color": "#6c7086",
+      "commands": [
+        {
+          "name": "root",
+          "command": "root"
+        }
+      ]
+    },
+    {
+      "name": "A",
+      "color": "#6c7086",
+      "commands": []
+    }
+  ]
+}
