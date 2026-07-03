@@ -1,0 +1,44 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "instructions": [
+    "AGENTS.md"
+  ],
+
+  "permission": {
+    "edit": "allow",
+    "bash": {
+      "python main.py": "allow",
+      "pip install *": "allow",
+      "*": "ask"
+    }
+  },
+
+  "agent": {
+    "explore": {
+      "description": "探索 RatShell 代码库，查找文件、搜索代码、理解架构"
+    },
+    "plan": {
+      "description": "在修改前分析工程结构，制定实现方案 (read-only)",
+      "permission": {
+        "edit": "deny",
+        "bash": "ask",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "question": "allow",
+        "todowrite": "allow"
+      }
+    }
+  },
+
+  "tool_output": {
+    "max_lines": 500,
+    "max_bytes": 16384
+  },
+
+  "compaction": {
+    "auto": true,
+    "tail_turns": 15
+  }
+}
