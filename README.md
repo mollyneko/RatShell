@@ -6,6 +6,9 @@
   <p>Built with PySide6 — inspired by frtty (PuTTY fork)</p>
 </div>
 
+<img width="1274" height="820" alt="图片" src="https://github.com/user-attachments/assets/ec9e6a31-d5c7-4e60-b404-e5a5a7f0dc5d" />
+
+
 ## 功能
 
 - **SSH** — 远程终端连接（paramiko）
