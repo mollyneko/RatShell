@@ -1,9 +1,9 @@
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QFrame, QSpinBox, QDoubleSpinBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QRect
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QColor, QTextCursor, QKeyEvent
+from PySide2.QtCore import Qt, Signal, QTimer, QRect
+from PySide2.QtGui import QFont, QFontMetrics, QPainter, QColor, QTextCursor, QKeyEvent
 from .i18n import tr
 from .logger import debug
 

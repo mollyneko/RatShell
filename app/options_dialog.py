@@ -1,11 +1,10 @@
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QRadioButton, QApplication, QButtonGroup
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide2.QtCore import Qt
+from PySide2.QtGui import QFont
 from .i18n import tr, set_language, current_language
-from .resources import apply_theme, DARK_THEME, LIGHT_THEME
 from .logger import debug
 
 
@@ -13,14 +12,11 @@ class OptionsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr("menu.tools.options"))
-        self.setFixedSize(420, 320)
+        self.setFixedSize(420, 280)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
         self._result = None
         self._parent = parent
 
-        app = QApplication.instance()
-        self._current_theme = app.property("theme") or "dark"
         self._current_lang = current_language()
 
         self._build_ui()
@@ -32,7 +28,13 @@ class OptionsDialog(QDialog):
 
         container = QWidget()
         container.setObjectName("dialogContainer")
-        self._update_container_style(container)
+        container.setStyleSheet("""
+            QWidget#dialogContainer {
+                background-color: #1e1e2e;
+                border: 1px solid #45475a;
+                border-radius: 12px;
+            }
+        """)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -48,12 +50,12 @@ class OptionsDialog(QDialog):
         tb.addWidget(title_label)
         tb.addStretch()
 
-        close_btn = QPushButton("\u2715")
+        close_btn = QPushButton("X")
         close_btn.setFixedSize(32, 32)
         close_btn.setStyleSheet("""
             QPushButton {
-                background: transparent; color: #6c7086; border: none;
-                font-size: 14px; border-radius: 16px;
+                background: transparent; color: #cdd6f4; border: none;
+                font-size: 14px; font-weight: bold; border-radius: 16px;
             }
             QPushButton:hover { background-color: #f38ba8; color: white; }
         """)
@@ -67,27 +69,6 @@ class OptionsDialog(QDialog):
         form = QVBoxLayout(content)
         form.setContentsMargins(24, 12, 24, 24)
         form.setSpacing(16)
-
-        theme_lbl = QLabel(tr("menu.tools.theme"))
-        theme_lbl.setStyleSheet("color: #89b4fa; font-size: 13px; font-weight: bold; background: transparent;")
-        form.addWidget(theme_lbl)
-
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(16)
-        self.theme_group = QButtonGroup(self)
-        self.theme_dark = QRadioButton(tr("options.theme_dark"))
-        self.theme_dark.setChecked(self._current_theme == "dark")
-        self.theme_dark.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent; spacing: 6px;")
-        self.theme_group.addButton(self.theme_dark)
-        theme_row.addWidget(self.theme_dark)
-        self.theme_light = QRadioButton(tr("options.theme_light"))
-        self.theme_light.setChecked(self._current_theme == "light")
-        self.theme_light.setStyleSheet("color: #cdd6f4; font-size: 12px; background: transparent; spacing: 6px;")
-        self.theme_group.addButton(self.theme_light)
-        theme_row.addWidget(self.theme_light)
-        theme_row.addStretch()
-        form.addLayout(theme_row)
-        self.theme_group.buttonToggled.connect(self._on_theme_changed)
 
         lang_lbl = QLabel(tr("menu.tools.language"))
         lang_lbl.setStyleSheet("color: #89b4fa; font-size: 13px; font-weight: bold; background: transparent;")
@@ -132,33 +113,6 @@ class OptionsDialog(QDialog):
 
         layout.addWidget(content, 1)
         root.addWidget(container)
-
-    def _update_container_style(self, container):
-        is_dark = self._current_theme == "dark"
-        bg = "#1e1e2e" if is_dark else "#eff1f5"
-        border = "#45475a" if is_dark else "#ccd0da"
-        container.setStyleSheet(f"""
-            QWidget#dialogContainer {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-radius: 12px;
-            }}
-        """)
-
-    def _on_theme_changed(self, btn, checked):
-        if not checked:
-            return
-        debug("OptionsDialog theme changed")
-        app = QApplication.instance()
-        new_theme = "dark" if btn == self.theme_dark else "light"
-        if new_theme == self._current_theme:
-            return
-        apply_theme(app, new_theme)
-        app.setProperty("theme", new_theme)
-        self._current_theme = new_theme
-        self._update_container_style(self.findChild(QWidget, "dialogContainer"))
-        if self._parent and hasattr(self._parent, '_apply_terminal_theme'):
-            self._parent._apply_terminal_theme(new_theme)
 
     def _on_lang_changed(self, btn, checked):
         if not checked:

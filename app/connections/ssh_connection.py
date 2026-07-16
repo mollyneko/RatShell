@@ -20,7 +20,7 @@ class SSHConnection(BaseConnection):
     def display_name(self):
         return f"SSH: {self._username}@{self._host}:{self._port}"
 
-    def connect(self):
+    def start(self):
         debug(f"SSH connect {self._username}@{self._host}:{self._port}")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()

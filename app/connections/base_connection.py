@@ -1,5 +1,5 @@
 import threading
-from PySide6.QtCore import QObject, Signal
+from PySide2.QtCore import QObject, Signal
 
 
 class BaseConnection(QObject):
@@ -18,7 +18,7 @@ class BaseConnection(QObject):
     def display_name(self):
         raise NotImplementedError
 
-    def connect(self):
+    def start(self):
         raise NotImplementedError
 
     def send(self, data):

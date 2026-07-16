@@ -17,7 +17,7 @@ class TelnetConnection(BaseConnection):
     def display_name(self):
         return f"Telnet: {self._host}:{self._port}"
 
-    def connect(self):
+    def start(self):
         debug(f"Telnet connect {self._host}:{self._port}")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()

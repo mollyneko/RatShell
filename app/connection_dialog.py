@@ -1,11 +1,11 @@
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QGroupBox, QFormLayout, QCheckBox,
     QSpinBox, QMessageBox, QStackedWidget, QWidget, QSpacerItem,
     QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide2.QtCore import Qt, Signal
+from PySide2.QtGui import QFont
 
 from .session_manager import list_sessions, load_session, save_session, default_session_data
 from .i18n import tr
@@ -20,7 +20,7 @@ class ConnectionDialog(QDialog):
         self._edit_data = edit_data
         is_edit = edit_data is not None
         self.setWindowTitle(tr("dialog.edit_session") if is_edit else tr("dialog.new_connection"))
-        self.setFixedSize(540, 560)
+        self.setFixedSize(540, 620)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._result = None
@@ -59,12 +59,12 @@ class ConnectionDialog(QDialog):
         tb_layout.addWidget(title_label)
         tb_layout.addStretch()
 
-        close_btn = QPushButton("\u2715")
+        close_btn = QPushButton("X")
         close_btn.setFixedSize(32, 32)
         close_btn.setStyleSheet("""
             QPushButton {
-                background: transparent; color: #6c7086; border: none;
-                font-size: 14px; border-radius: 16px;
+                background: transparent; color: #cdd6f4; border: none;
+                font-size: 14px; font-weight: bold; border-radius: 16px;
             }
             QPushButton:hover { background-color: #f38ba8; color: white; }
         """)
@@ -154,7 +154,8 @@ class ConnectionDialog(QDialog):
             self.session_combo.setStyleSheet(self.type_combo.styleSheet())
             ql.addWidget(self.session_combo)
             self.save_cb = QCheckBox(tr("dialog.save_session"))
-            self.save_cb.setStyleSheet("color: #a6adc8; spacing: 8px; background: transparent;")
+            self.save_cb.setChecked(True)
+            self.save_cb.setStyleSheet("color: #cdd6f4; spacing: 8px; background: transparent;")
             ql.addWidget(self.save_cb)
             form.addWidget(quick_group)
 
@@ -206,13 +207,10 @@ class ConnectionDialog(QDialog):
         self.ssh_host.setMinimumHeight(36)
         f.addRow(self._label(tr("ssh.host")), self.ssh_host)
 
-        host_port = QHBoxLayout()
         self.ssh_port = QLineEdit("22")
         self.ssh_port.setFixedWidth(80)
         self.ssh_port.setMinimumHeight(36)
-        host_port.addWidget(self.ssh_port)
-        host_port.addStretch()
-        f.addRow(self._label(tr("ssh.port")), host_port)
+        f.addRow(self._label(tr("ssh.port")), self.ssh_port)
 
         self.ssh_user = QLineEdit()
         self.ssh_user.setPlaceholderText(tr("ssh.username_placeholder"))
@@ -232,27 +230,22 @@ class ConnectionDialog(QDialog):
         w.setStyleSheet("background: transparent;")
         f = QFormLayout(w)
         f.setContentsMargins(0, 0, 0, 0)
-        f.setSpacing(10)
+        f.setSpacing(8)
         f.setLabelAlignment(Qt.AlignRight)
 
-        port_row = QHBoxLayout()
-        port_row.setSpacing(6)
-        self.ser_port = QComboBox()
-        self.ser_port.setEditable(True)
-        self.ser_port.setMinimumHeight(36)
-        self.ser_port.setStyleSheet("""
+        combo_style = """
             QComboBox {
                 background-color: #313244; color: #cdd6f4;
                 border: 1px solid #45475a; border-radius: 8px;
-                padding: 8px 14px; font-size: 13px;
-                min-height: 22px;
+                padding: 6px 12px; font-size: 13px;
+                min-height: 20px;
             }
-            QComboBox::drop-down { border: none; width: 30px; }
+            QComboBox::drop-down { border: none; width: 28px; }
             QComboBox::down-arrow {
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
                 border-top: 6px solid #cdd6f4;
-                margin-right: 8px;
+                margin-right: 6px;
             }
             QComboBox QAbstractItemView {
                 background-color: #313244; color: #cdd6f4;
@@ -260,43 +253,42 @@ class ConnectionDialog(QDialog):
                 selection-background-color: #45475a;
             }
             QComboBox QAbstractItemView::item {
-                padding: 8px 12px; border-radius: 4px;
+                padding: 6px 10px; border-radius: 4px;
             }
-        """)
+        """
+
+        self.ser_port = QComboBox()
+        self.ser_port.setEditable(True)
+        self.ser_port.setMinimumHeight(36)
+        self.ser_port.setStyleSheet(combo_style)
         self._refresh_com_ports()
-        port_row.addWidget(self.ser_port, 1)
-        refresh_btn = QPushButton("\u21bb")
-        refresh_btn.setFixedSize(36, 36)
-        refresh_btn.setToolTip(tr("serial.refresh_ports"))
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #313244; color: #a6adc8;
-                border: 1px solid #45475a; border-radius: 8px;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: #45475a; color: #cdd6f4; }
-        """)
-        refresh_btn.clicked.connect(self._refresh_com_ports)
-        port_row.addWidget(refresh_btn)
-        f.addRow(self._label(tr("serial.port")), port_row)
+        f.addRow(self._label(tr("serial.port")), self.ser_port)
 
         self.ser_baud = QComboBox()
         self.ser_baud.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self.ser_baud.setCurrentText("115200")
         self.ser_baud.setEditable(True)
+        self.ser_baud.setMinimumHeight(36)
+        self.ser_baud.setStyleSheet(combo_style)
         f.addRow(self._label(tr("serial.baud")), self.ser_baud)
 
         self.ser_bits = QComboBox()
         self.ser_bits.addItems(["5", "6", "7", "8"])
         self.ser_bits.setCurrentText("8")
+        self.ser_bits.setMinimumHeight(36)
+        self.ser_bits.setStyleSheet(combo_style)
         f.addRow(self._label(tr("serial.data_bits")), self.ser_bits)
 
         self.ser_parity = QComboBox()
         self.ser_parity.addItems(["None", "Even", "Odd", "Mark", "Space"])
+        self.ser_parity.setMinimumHeight(36)
+        self.ser_parity.setStyleSheet(combo_style)
         f.addRow(self._label(tr("serial.parity")), self.ser_parity)
 
         self.ser_stop = QComboBox()
         self.ser_stop.addItems(["1", "1.5", "2"])
+        self.ser_stop.setMinimumHeight(36)
+        self.ser_stop.setStyleSheet(combo_style)
         f.addRow(self._label(tr("serial.stop_bits")), self.ser_stop)
 
         return w
@@ -317,10 +309,7 @@ class ConnectionDialog(QDialog):
         self.tel_port = QLineEdit("23")
         self.tel_port.setFixedWidth(80)
         self.tel_port.setMinimumHeight(36)
-        hp = QHBoxLayout()
-        hp.addWidget(self.tel_port)
-        hp.addStretch()
-        f.addRow(self._label(tr("telnet.port")), hp)
+        f.addRow(self._label(tr("telnet.port")), self.tel_port)
 
         return w
 
@@ -425,7 +414,8 @@ class ConnectionDialog(QDialog):
                 data["display_name"] = name
 
             if not self._edit_data and self.save_cb.isChecked():
-                save_session(data.get("display_name") or data.get("host", data.get("port", "session")), data)
+                save_name = data.get("display_name") or self._auto_name(data)
+                save_session(save_name, data)
 
             self._result = data
             if not self._edit_data:
@@ -433,6 +423,15 @@ class ConnectionDialog(QDialog):
             self.accept()
         except ValueError as e:
             QMessageBox.warning(self, "Input Error", str(e))
+
+    @staticmethod
+    def _auto_name(data):
+        tt = data.get("type", "ssh")
+        if tt == "ssh":
+            return f"SSH-{data.get('host', 'unknown')}-{data.get('port', 22)}"
+        if tt == "serial":
+            return f"Serial-{data.get('port', 'COM?')}-{data.get('baudrate', 115200)}"
+        return f"Telnet-{data.get('host', 'unknown')}-{data.get('port', 23)}"
 
     @staticmethod
     def get_connection(parent=None):

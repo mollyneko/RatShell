@@ -1,14 +1,14 @@
 import json
 import os
 
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QLabel, QLineEdit, QMenu, QMenuBar, QSplitter,
     QFrame, QSizePolicy, QApplication, QDockWidget, QListWidget,
-    QMessageBox, QDialog
+    QMessageBox, QDialog, QAction
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QSize, QPoint
-from PySide6.QtGui import QFont, QAction, QColor, QPalette, QIcon, QPainter, QBrush, QPen
+from PySide2.QtCore import Qt, Signal, Slot, QTimer, QSize, QPoint
+from PySide2.QtGui import QFont, QColor, QPalette, QIcon, QPainter, QBrush, QPen
 
 from .title_bar import TitleBar
 from .terminal_widget import TerminalWidget
@@ -19,7 +19,7 @@ from .session_panel import SessionTreePanel, HistoryPanel
 from .quick_tags_bar import QuickTagsBar
 from .connections import create_connection
 from .session_manager import list_sessions, load_session, save_session, delete_session
-from .resources import APP_NAME, APP_VERSION
+from .resources import APP_NAME, APP_VERSION, get_data_dir, get_app_dir
 from .i18n import tr
 
 TAB_COLORS = {
@@ -64,7 +64,7 @@ class ColorTabButton(QPushButton):
         if event.button() == Qt.LeftButton:
             tw = self.width()
             close_x = tw - 22
-            if event.position().x() >= close_x and self._hovered:
+            if event.pos().x() >= close_x and self._hovered:
                 self.close_clicked.emit(self._idx)
                 return
         super().mousePressEvent(event)
@@ -80,7 +80,7 @@ class ColorTabButton(QPushButton):
 
     def mouseMoveEvent(self, event):
         tw = self.width()
-        self._close_hover = event.position().x() >= tw - 22
+        self._close_hover = event.pos().x() >= tw - 22
         self.update()
 
     def paintEvent(self, event):
@@ -110,8 +110,14 @@ class ColorTabButton(QPushButton):
 
         if self._hovered:
             cx, cy = r.width() - 16, r.height() // 2
-            close_color = QColor("#f38ba8") if self._close_hover else QColor("#6c7086")
-            painter.setPen(QPen(close_color, 1.5))
+            if self._close_hover:
+                # Red background circle for close button hover
+                painter.setBrush(QBrush(QColor("#f38ba8")))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(cx - 5, cy - 5, 10, 10)
+                painter.setPen(QPen(QColor("#1e1e2e"), 1.5))
+            else:
+                painter.setPen(QPen(QColor("#6c7086"), 1.5))
             painter.drawLine(cx - 4, cy - 4, cx + 4, cy + 4)
             painter.drawLine(cx + 4, cy - 4, cx - 4, cy + 4)
 
@@ -180,6 +186,25 @@ class TabBarWidget(QFrame):
             btn = self._tabs.pop(idx)
             self._tab_layout.removeWidget(btn)
             btn.deleteLater()
+            # Re-index remaining buttons and reconnect signals
+            for i, b in enumerate(self._tabs):
+                b._idx = i
+                # Disconnect old signals and reconnect with corrected index
+                try:
+                    b.clicked.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+                b.clicked.connect(lambda checked, ix=i: self._select(ix))
+                try:
+                    b.close_clicked.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+                b.close_clicked.connect(lambda ix=i: self.tab_close_clicked.emit(ix))
+                try:
+                    b.context_menu.disconnect()
+                except (TypeError, RuntimeError):
+                    pass
+                b.context_menu.connect(lambda ix, pos: self.tab_context_menu.emit(ix, pos))
             if self._selected >= len(self._tabs):
                 self._select(len(self._tabs) - 1)
             elif self._selected == idx:
@@ -296,6 +321,11 @@ class MainWindow(QMainWindow):
         self._reconnecting = set()
         self._saved_to_sid = {}
         self._sid_refcount = {}
+        self._name_refcount = {}
+        # uid is a never-reused unique tab ID; uid -> {items_index, session_id} mapping
+        self._next_uid = 0
+        self._uid_info = {}
+        self._items_idx_by_uid = {}
 
         central = QWidget()
         central.setObjectName("centralWidget")
@@ -375,7 +405,7 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._update_time)
         self._timer.start(1000)
 
-        self._apply_terminal_theme("dark")
+        self._apply_terminal_theme()
         self._restore_last_session()
 
     def _create_menu_bar(self):
@@ -490,7 +520,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self._dock)
 
     def _last_session_path(self):
-        return os.path.join(os.path.dirname(__file__), "last_session.json")
+        return os.path.join(get_data_dir(), "last_session.json")
 
     def _save_last_session(self, config, saved_name=None):
         data = {"config": config}
@@ -528,21 +558,22 @@ class MainWindow(QMainWindow):
         debug(f"_start_connection type={config.get('type')} host={config.get('host')} port={config.get('port')} from_saved={from_saved}")
         try:
             conn = create_connection(config)
-            conn_type = config.get("type", "ssh")
-            label = config.get("display_name") or conn.display_name
-            if from_saved:
-                sid = self.session_panel.activate_saved(from_saved, conn_type)
-                self._saved_to_sid[from_saved] = sid
-                self._sid_refcount[sid] = self._sid_refcount.get(sid, 0) + 1
-            else:
-                sid = self.session_panel.add_session(conn.display_name, conn_type, "connected")
-                self._sid_refcount[sid] = 1
-            self._save_last_session(config, from_saved)
-            self._create_tab(conn, label, sid, conn_type)
-            return sid
         except Exception as e:
-            debug(f"  _start_connection failed: {e}")
             self.status_bar.set_status(f"Error: {e}", "#f38ba8")
+            return
+        conn_type = config.get("type", "ssh")
+        label = config.get("display_name") or conn.display_name
+        if from_saved:
+            sid = self.session_panel.activate_saved(from_saved, conn_type)
+            self._saved_to_sid[from_saved] = sid
+            self._sid_refcount[sid] = self._sid_refcount.get(sid, 0) + 1
+        else:
+            sid = self.session_panel.add_session(label, conn_type, "connected")
+            self._sid_refcount[sid] = 1
+        self._name_refcount[label] = self._name_refcount.get(label, 0) + 1
+        self._save_last_session(config, from_saved)
+        self._create_tab(conn, label, sid, conn_type)
+        return sid
 
     def _create_tab(self, conn, label, sid, conn_type=None):
         tab = SessionTab(conn)
@@ -559,7 +590,7 @@ class MainWindow(QMainWindow):
         tab.terminal.command_sent.connect(self.history_panel.add_command)
         tab._session_id = sid
         debug(f"  create_tab idx={idx} sid={sid} label={label}")
-        conn.connect()
+        conn.start()
         self._sessions.append(tab)
 
     def _on_tab_connected(self, idx, sid):
@@ -580,26 +611,46 @@ class MainWindow(QMainWindow):
         debug(f"_on_tab_disconnected idx={idx} sid={sid} msg={msg}")
         if idx in self._reconnecting:
             return
+        # If sid was already cleaned up by _close_tab, ignore stale signal
+        if sid not in self._sid_refcount:
+            debug(f"  stale signal, sid {sid} already cleaned up")
+            return
         if 0 <= idx < self.tab_widget.count():
             self.color_tab_bar.set_tab_connected(idx, False)
         saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-        if saved and self._sid_refcount.get(sid, 0) <= 1:
-            del self._saved_to_sid[saved]
-            self.session_panel.deactivate_to_saved(sid)
-        elif not saved:
-            self.session_panel.update_session(sid, status="disconnected")
+        # Check if another tab with the same name is still connected
+        tab = self.tab_widget.widget(idx) if 0 <= idx < self.tab_widget.count() else None
+        name = ""
+        if tab and hasattr(tab, 'connection'):
+            cfg = tab.connection.config
+            name = cfg.get("display_name") or tab.connection.display_name
+        if not name or self._name_refcount.get(name, 0) <= 1:
+            if saved:
+                self.session_panel.update_session(sid, status="disconnected")
+            else:
+                self.session_panel.update_session(sid, status="disconnected")
         if idx == self.tab_widget.currentIndex():
             self.status_bar.set_status("Disconnected", "#f38ba8")
 
     def _on_tab_error(self, idx, sid, msg):
         debug(f"_on_tab_error idx={idx} sid={sid} msg={msg}")
         self._reconnecting.discard(idx)
+        # If sid was already cleaned up by _close_tab, ignore stale signal
+        if sid not in self._sid_refcount:
+            debug(f"  stale error signal, sid {sid} already cleaned up")
+            return
         saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-        if saved and self._sid_refcount.get(sid, 0) <= 1:
-            del self._saved_to_sid[saved]
-            self.session_panel.deactivate_to_saved(sid)
-        elif not saved:
-            self.session_panel.update_session(sid, status="disconnected")
+        # Check if another tab with the same name is still connected
+        tab = self.tab_widget.widget(idx) if 0 <= idx < self.tab_widget.count() else None
+        name = ""
+        if tab and hasattr(tab, 'connection'):
+            cfg = tab.connection.config
+            name = cfg.get("display_name") or tab.connection.display_name
+        if not name or self._name_refcount.get(name, 0) <= 1:
+            if saved:
+                self.session_panel.update_session(sid, status="disconnected")
+            else:
+                self.session_panel.update_session(sid, status="disconnected")
         if idx == self.tab_widget.currentIndex():
             self.status_bar.set_status(f"Error: {msg}", "#f38ba8")
 
@@ -656,8 +707,7 @@ class MainWindow(QMainWindow):
             label = data.get("display_name") or conn.display_name
             self._create_tab(conn, label, sid, data.get("type", "ssh"))
         else:
-            sid = self._start_connection(data, from_saved=name)
-            self._saved_to_sid[name] = sid
+            self._start_connection(data, from_saved=name)
 
     def _on_active_dbl_click(self, idx):
         debug(f"_on_active_dbl_click idx={idx}")
@@ -682,14 +732,14 @@ class MainWindow(QMainWindow):
         menu.setStyleSheet(self._menu_style())
         edit_a = menu.addAction(tr("session_panel.edit_session"))
         delete_a = menu.addAction(tr("session_panel.delete_session"))
-        action = menu.exec(pos)
+        action = menu.exec_(pos)
         if action == edit_a:
             dlg = ConnectionDialog(self, edit_data=data)
             if dlg.exec() == QDialog.Accepted and dlg._result:
                 save_session(name, dlg._result)
         elif action == delete_a:
             from .session_manager import delete_session
-            from PySide6.QtWidgets import QMessageBox
+            from PySide2.QtWidgets import QMessageBox
             r = QMessageBox.question(self, tr("session_panel.delete_session"),
                 tr("session_panel.delete_confirm").format(name),
                 QMessageBox.Yes | QMessageBox.No)
@@ -716,6 +766,12 @@ class MainWindow(QMainWindow):
                 if new_cfg.get("display_name"):
                     save_session(new_cfg["display_name"], new_cfg)
 
+    def _exec_menu_clamped(self, menu, pos):
+        w = self.window() if self.window() != self else self
+        px = max(w.x(), min(pos.x(), w.x() + w.width() - menu.sizeHint().width()))
+        py = max(w.y(), min(pos.y(), w.y() + w.height() - menu.sizeHint().height()))
+        menu.exec_(QPoint(px, py))
+
     def _on_tab_context_menu(self, idx, pos):
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -732,7 +788,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         a_close = menu.addAction(tr("context.close"))
         a_close.triggered.connect(lambda: self._close_tab(idx))
-        menu.exec(pos)
+        self._exec_menu_clamped(menu, pos)
 
     def _on_session_context_menu(self, idx, pos):
         menu = QMenu(self)
@@ -746,7 +802,7 @@ class MainWindow(QMainWindow):
         a_edit.triggered.connect(lambda: self._edit_active_session(idx))
         a_close = menu.addAction(tr("context.close"))
         a_close.triggered.connect(lambda: self._close_tab(idx))
-        menu.exec(pos)
+        self._exec_menu_clamped(menu, pos)
 
     def _disconnect_tab(self, idx):
         if 0 <= idx < self.tab_widget.count():
@@ -756,12 +812,15 @@ class MainWindow(QMainWindow):
                 tab.connection.disconnect()
             sid = getattr(tab, '_session_id', 0)
             saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
+            cfg = tab.connection.config if (tab and hasattr(tab, 'connection')) else {}
+            name = cfg.get("display_name") or tab.connection.display_name if tab else ""
             if saved and self._sid_refcount.get(sid, 0) <= 1:
                 del self._saved_to_sid[saved]
                 self.session_panel.deactivate_to_saved(sid)
             elif not saved:
-                self.session_panel.update_session(sid, status="disconnected")
-            self.color_tab_bar.set_tab_label(idx, tab.connection.display_name + " (off)")
+                if not name or self._name_refcount.get(name, 0) <= 1:
+                    self.session_panel.update_session(sid, status="disconnected")
+            self.color_tab_bar.set_tab_label(idx, name + " (off)")
             self.status_bar.set_status(tr("status.disconnected"), "#f38ba8")
 
     def _reconnect_tab(self, idx):
@@ -786,7 +845,7 @@ class MainWindow(QMainWindow):
                 new_conn.error_occurred.connect(lambda msg, i=idx, s=sid: self._on_tab_error(i, s, msg))
                 tab.connection = new_conn
                 tab.terminal.set_connection(new_conn)
-                new_conn.connect()
+                new_conn.start()
                 self.tab_widget.setTabText(idx, reconnect_label)
                 self.color_tab_bar.set_tab_label(idx, reconnect_label)
                 self.status_bar.set_status(tr("status.reconnecting"), "#f9e2af")
@@ -810,7 +869,7 @@ class MainWindow(QMainWindow):
         tab = self.tab_widget.currentWidget()
         if tab and hasattr(tab, 'terminal') and tab.terminal._running and tab.terminal._connection:
             tab.terminal._connection.send(cmd + "\n")
-            self.history_panel.add_command(cmd)
+            self.history_panel.record_command(cmd)
 
     def _close_tab(self, idx):
         debug(f"_close_tab idx={idx}")
@@ -828,13 +887,25 @@ class MainWindow(QMainWindow):
                 self._sid_refcount.pop(sid, None)
                 if saved:
                     del self._saved_to_sid[saved]
-                    self.session_panel.deactivate_to_saved(sid)
+                    self.session_panel.deactivate_to_saved(sid, saved)
                 else:
                     self.session_panel.remove_session(sid)
+            # Decrement name refcount
+            if tab and hasattr(tab, 'connection'):
+                cfg = tab.connection.config
+                name = cfg.get("display_name") or tab.connection.display_name
+                nref = self._name_refcount.get(name, 0) - 1
+                if nref > 0:
+                    self._name_refcount[name] = nref
+                else:
+                    self._name_refcount.pop(name, None)
             self.color_tab_bar.remove_tab(idx)
             self.tab_widget.removeTab(idx)
-            if idx in self._conn_type_map:
-                del self._conn_type_map[idx]
+            # Re-index _conn_type_map: shift entries after removed idx down
+            for i in range(idx + 1, self.tab_widget.count() + 1):
+                if i in self._conn_type_map:
+                    self._conn_type_map[i - 1] = self._conn_type_map.pop(i)
+            self._conn_type_map.pop(self.tab_widget.count(), None)
             if tab in self._sessions:
                 self._sessions.remove(tab)
             if self.tab_widget.count() == 0:
@@ -880,7 +951,7 @@ class MainWindow(QMainWindow):
     def _on_paste(self):
         term = self._current_terminal()
         if term and term._running and term._connection:
-            from PySide6.QtWidgets import QApplication
+            from PySide2.QtWidgets import QApplication
             text = QApplication.clipboard().text()
             if text:
                 term._connection.send(text)
@@ -896,21 +967,8 @@ class MainWindow(QMainWindow):
             term._line_numbers = not term._line_numbers
             term._update_line_number_width()
 
-    def _toggle_theme(self):
-        from .resources import apply_theme
-        app = QApplication.instance()
-        current = app.property("theme")
-        new_theme = "light" if current == "dark" else "dark"
-        apply_theme(app, new_theme)
-        app.setProperty("theme", new_theme)
-        self._rebuild_ui_strings()
-        self._apply_terminal_theme(new_theme)
-
-    def _apply_terminal_theme(self, theme="dark"):
-        if theme == "light":
-            bg, fg, sel_bg, sel_fg = "#eff1f5", "#4c4f69", "#1e66f5", "#ffffff"
-        else:
-            bg, fg, sel_bg, sel_fg = "#1a1b2e", "#cdd6f4", "#89b4fa", "#1e1e2e"
+    def _apply_terminal_theme(self):
+        bg, fg, sel_bg, sel_fg = "#1a1b2e", "#cdd6f4", "#89b4fa", "#1e1e2e"
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
             if tab and hasattr(tab, 'terminal'):
@@ -929,9 +987,9 @@ class MainWindow(QMainWindow):
 
     def _on_about(self):
         import datetime
-        from PySide6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton
-        from PySide6.QtGui import QPixmap, QFont
-        from PySide6.QtCore import Qt
+        from PySide2.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QLabel, QPushButton
+        from PySide2.QtGui import QPixmap, QFont
+        from PySide2.QtCore import Qt
         dlg = QDialog(self)
         dlg.setWindowTitle(tr("menu.help.about"))
         dlg.setFixedSize(360, 380)
@@ -939,7 +997,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(24, 20, 24, 16)
         layout.setSpacing(8)
-        pix = QPixmap(os.path.join(os.path.dirname(__file__), "..", "Rat.png"))
+        pix = QPixmap(os.path.join(get_app_dir(), "Rat.png"))
         if not pix.isNull():
             icon_label = QLabel()
             icon_label.setPixmap(pix.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -956,7 +1014,7 @@ class MainWindow(QMainWindow):
             f"<b>Date:</b> {year}<br>"
             f"<b>License:</b> LGPL<br><br>"
             f"SSH / Serial / Telnet terminal<br>"
-            f"Built with PySide6</div>"
+            f"Built with PySide2</div>"
         )
         info.setAlignment(Qt.AlignCenter)
         info.setWordWrap(True)

@@ -1,17 +1,18 @@
 import json
 import os
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QMenu, QInputDialog, QMessageBox,
-    QDialog, QLineEdit, QFormLayout, QSizePolicy
+    QDialog, QLineEdit, QFormLayout, QSizePolicy, QAction
 )
-from PySide6.QtCore import Qt, Signal, QPoint
-from PySide6.QtGui import QColor, QFont, QPainter, QBrush, QPen, QAction
+from PySide2.QtCore import Qt, Signal, QPoint
+from PySide2.QtGui import QColor, QFont, QPainter, QBrush, QPen
 
 from .i18n import tr
 from .logger import debug
+from .resources import get_data_dir
 
-COMMANDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_commands.json")
+COMMANDS_FILE = os.path.join(get_data_dir(), "quick_commands.json")
 
 
 def _load_commands():
@@ -119,7 +120,11 @@ class QuickTagsBar(QFrame):
         groups = self._data.get("groups", [])
         if not groups:
             self._group_btn.setText("[No Groups]")
-            self._group_btn.setEnabled(False)
+            self._group_btn.setEnabled(True)
+            for b in self._cmd_buttons:
+                self._cmd_layout.removeWidget(b)
+                b.deleteLater()
+            self._cmd_buttons.clear()
             return
 
         self._group_btn.setEnabled(True)
@@ -138,6 +143,12 @@ class QuickTagsBar(QFrame):
             self._cmd_layout.insertWidget(stretch_idx, btn)
             self._cmd_buttons.append(btn)
 
+    def _exec_menu_clamped(self, menu, pos):
+        w = self.window() if self.window() else self
+        px = max(w.x(), min(pos.x(), w.x() + w.width() - menu.sizeHint().width()))
+        py = max(w.y(), min(pos.y(), w.y() + w.height() - menu.sizeHint().height()))
+        menu.exec_(QPoint(px, py))
+
     def _on_cmd_context(self, ci, pos):
         debug("QuickTagsBar._on_cmd_context", ci, pos)
         menu = QMenu(self)
@@ -146,7 +157,7 @@ class QuickTagsBar(QFrame):
         edit_a.triggered.connect(lambda: self._edit_command(ci))
         del_a = menu.addAction(tr("quick.delete_command"))
         del_a.triggered.connect(lambda: self._delete_command(ci))
-        menu.exec(pos)
+        self._exec_menu_clamped(menu, pos)
 
     def _edit_command(self, ci):
         debug("QuickTagsBar._edit_command", ci)
@@ -157,7 +168,7 @@ class QuickTagsBar(QFrame):
         if ci >= len(cmds):
             return
         old = cmds[ci]
-        from PySide6.QtWidgets import QInputDialog
+        from PySide2.QtWidgets import QInputDialog
         name, ok1 = QInputDialog.getText(self, tr("quick.edit_command"), tr("dialog.name"), text=old["name"])
         if not ok1 or not name.strip():
             return
@@ -200,7 +211,7 @@ class QuickTagsBar(QFrame):
         menu.addSeparator()
         mgmt =         menu.addAction(tr("quick.manage_groups"))
         mgmt.triggered.connect(lambda: self._on_menu(None))
-        menu.exec(self._group_btn.mapToGlobal(
+        menu.exec_(self._group_btn.mapToGlobal(
             self._group_btn.rect().bottomLeft()))
 
     def _on_menu(self, pos):
@@ -228,9 +239,9 @@ class QuickTagsBar(QFrame):
             reset.triggered.connect(self._on_reset)
 
         if pos is not None:
-            menu.exec(self._group_btn.mapToGlobal(pos))
+            self._exec_menu_clamped(menu, self._group_btn.mapToGlobal(pos))
         else:
-            menu.exec(self._group_btn.mapToGlobal(
+            self._exec_menu_clamped(menu, self._group_btn.mapToGlobal(
                 self._group_btn.rect().bottomLeft()))
 
     def _switch_group(self, idx):

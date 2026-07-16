@@ -3,14 +3,14 @@ import re
 import datetime
 import pyte
 import wcwidth
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QWidget, QApplication, QMenu, QScrollBar, QFileDialog,
-    QHBoxLayout, QLineEdit, QPushButton, QLabel
+    QHBoxLayout, QLineEdit, QPushButton, QLabel, QAction
 )
-from PySide6.QtCore import Qt, Signal, QRect, QTimer, QPoint, QUrl
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QFontDatabase, QPainter, QClipboard, QDesktopServices
+from PySide2.QtCore import Qt, Signal, QRect, QTimer, QPoint, QUrl
+from PySide2.QtGui import QColor, QFont, QFontMetrics, QFontDatabase, QPainter, QClipboard, QDesktopServices, QPixmap, QIcon
 from .i18n import tr
-from .resources import APP_NAME, APP_VERSION
+from .resources import APP_NAME, APP_VERSION, get_data_dir
 from .log_manager import LogManager
 from .logger import debug
 
@@ -36,7 +36,7 @@ class SearchBar(QWidget):
         hl.setSpacing(6)
 
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Find...")
+        self._input.setPlaceholderText(tr("search.placeholder"))
         self._input.setStyleSheet("""
             QLineEdit {
                 background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;
@@ -45,9 +45,17 @@ class SearchBar(QWidget):
             QLineEdit:focus { border-color: #89b4fa; }
         """)
         self._input.setFixedWidth(200)
+
+        # Aa toggle inside the search input
+        self._case_act = QAction(self)
+        self._case_act.setToolTip("Aa")
+        self._case_act.setData(False)
+        self._update_case_icon()
+        self._input.addAction(self._case_act, QLineEdit.TrailingPosition)
+
         hl.addWidget(self._input)
 
-        self._prev = QPushButton("< Prev")
+        self._prev = QPushButton(tr("search.prev"))
         self._prev.setStyleSheet("""
             QPushButton { background: transparent; color: #cdd6f4;
                 border: 1px solid #45475a; border-radius: 4px;
@@ -56,7 +64,7 @@ class SearchBar(QWidget):
         """)
         hl.addWidget(self._prev)
 
-        self._next = QPushButton("Next >")
+        self._next = QPushButton(tr("search.next"))
         self._next.setStyleSheet("""
             QPushButton { background: transparent; color: #cdd6f4;
                 border: 1px solid #45475a; border-radius: 4px;
@@ -69,18 +77,7 @@ class SearchBar(QWidget):
         self._label.setStyleSheet("color: #6c7086; font-size: 11px; background: transparent;")
         hl.addWidget(self._label)
 
-        self._case = QPushButton("Aa")
-        self._case.setCheckable(True)
-        self._case.setStyleSheet("""
-            QPushButton { background: transparent; color: #cdd6f4;
-                border: 1px solid #45475a; border-radius: 4px;
-                padding: 2px 8px; font-size: 11px; font-weight: bold; }
-            QPushButton:checked { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
-            QPushButton:hover { background: #313244; color: #89b4fa; border-color: #89b4fa; }
-        """)
-        hl.addWidget(self._case)
-
-        self._close = QPushButton("Close")
+        self._close = QPushButton(tr("search.close"))
         self._close.setStyleSheet("""
             QPushButton { background: transparent; color: #cdd6f4;
                 border: 1px solid #45475a; border-radius: 4px;
@@ -88,6 +85,23 @@ class SearchBar(QWidget):
             QPushButton:hover { background: #f38ba8; color: #1e1e2e; border-color: #f38ba8; }
         """)
         hl.addWidget(self._close)
+
+    def _update_case_icon(self):
+        active = self._case_act.data()
+        px = QPixmap(20, 20)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        if active:
+            p.fillRect(px.rect(), QColor("#89b4fa"))
+            p.setPen(QColor("#1e1e2e"))
+        else:
+            p.setPen(QColor("#6c7086"))
+        f = QFont("Segoe UI", 9, QFont.Bold)
+        p.setFont(f)
+        p.drawText(px.rect(), Qt.AlignCenter, "Aa")
+        p.end()
+        self._case_act.setIcon(QIcon(px))
+
 
 def _brighten(c, amount=0.35):
     r = min(255, int(c.red() + (255 - c.red()) * amount))
@@ -228,7 +242,7 @@ class TerminalWidget(QWidget):
         self._char_width = fm.horizontalAdvance("W")
         self._char_height = fm.height()
 
-        self._screen = pyte.HistoryScreen(80, 24, history=10000)
+        self._screen = pyte.HistoryScreen(200, 24, history=10000)
         self._stream = pyte.Stream(self._screen)
 
         self._cursor_visible = True
@@ -277,35 +291,57 @@ class TerminalWidget(QWidget):
 
     def _update_line_number_width(self):
         self._line_number_area.setVisible(self._line_numbers)
-        self._recalculate_size()
         cr = self.contentsRect()
         lnw = self._line_number_width()
         self._line_number_area.setGeometry(QRect(cr.left(), cr.top(), lnw, cr.height()))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._recalculate_size()
+        self._resize_buffer()
         cr = self.contentsRect()
         lnw = self._line_number_width()
         self._line_number_area.setGeometry(QRect(cr.left(), cr.top(), lnw, cr.height()))
         sbw = self._scrollbar.sizeHint().width()
         self._scrollbar.setGeometry(QRect(cr.right() - sbw, cr.top(), sbw, cr.height()))
-        if self._search_bar:
-            self._search_bar.setGeometry(QRect(cr.left(), cr.top(), cr.width(), 36))
         self._update_scrollbar()
 
-    def _recalculate_size(self):
+    def _resize_buffer(self):
+        if not self._screen or self._char_height <= 0:
+            return
         w = self.width()
         h = self.height()
         if w < 1 or h < 1:
             return
         cols = max(20, (w - self._line_number_width()) // self._char_width)
         rows = max(5, h // self._char_height)
-        if cols != self._screen.columns or rows != self._screen.lines:
-            self._screen.resize(rows, cols)
+        if cols == self._screen.columns and rows == self._screen.lines:
+            return
+
+        old_rows = self._screen.lines
+        saved = {}
+        if rows < old_rows:
+            # Save buffer content before shrink: pyte.resize discards real
+            # content at the top and keeps empty lines from prior expansion.
+            for y in range(old_rows):
+                if y in self._screen.buffer:
+                    saved[y] = dict(self._screen.buffer[y].items())
+
+        self._screen.resize(rows, cols)
+
+        if saved:
+            # Restore real content column by column (line objects are
+            # StaticDefaultDict, not plain lists, so we mustn't replace them).
+            count = min(rows, len(saved))
+            for y in range(count):
+                if y in saved:
+                    for col, char in saved[y].items():
+                        self._screen.buffer[y][col] = char
+
+        self._scroll_to_bottom()
 
     def paintEvent(self, event):
-        self._recalculate_size()
+        if not self._screen:
+            return
         painter = QPainter(self)
         painter.setFont(self._font)
         painter.fillRect(self.rect(), self._bg_color)
@@ -318,6 +354,7 @@ class TerminalWidget(QWidget):
         cw = self._char_width
         lnw = self._line_number_width()
         sbw = self._scrollbar.sizeHint().width()
+        vis_cols = max(20, (self.width() - lnw) // cw) if cw else screen.columns
 
         all_lines = []
         if screen.history.top is not None:
@@ -341,7 +378,7 @@ class TerminalWidget(QWidget):
             row = all_lines[src_idx]
             py = y * ch
             x = 0
-            while x < screen.columns:
+            while x < vis_cols:
                 char = row[x]
                 w = max(1, wcwidth.wcwidth(char.data))
                 cw_char = cw * w
@@ -354,14 +391,20 @@ class TerminalWidget(QWidget):
                     painter.fillRect(px, py, int(cw_char), ch, bg)
 
                 if self._search_matches and self._is_in_match(src_idx, x):
-                    painter.fillRect(px, py, int(cw_char), ch, QColor("#f9e2af"))
+                    if self._is_current_match(src_idx, x):
+                        painter.fillRect(px, py, int(cw_char), ch, QColor("#f9a825"))
+                    else:
+                        painter.fillRect(px, py, int(cw_char), ch, QColor("#f9e2af"))
 
                 if char.data not in (" ", "", None):
                     fg_color = _pyte_color_to_qcolor(char.fg, self._fg_color)
                     if char.reverse:
                         fg_color = self._bg_color
                     if self._search_matches and self._is_in_match(src_idx, x):
-                        fg_color = QColor("#1e1e2e")
+                        if self._is_current_match(src_idx, x):
+                            fg_color = QColor("#1e1e2e")
+                        else:
+                            fg_color = QColor("#1e1e2e")
                     elif has_sel and _in_selection(sel_start, sel_end, y, x):
                         painter.fillRect(px, py, int(cw_char), ch, self._sel_bg)
                         fg_color = self._sel_fg
@@ -404,6 +447,15 @@ class TerminalWidget(QWidget):
         h = self._screen.history
         hist_lines = len(h.top) if h.top is not None else 0
         return hist_lines + self._screen.lines
+
+    def _get_view_start(self):
+        if not self._screen:
+            return 0
+        total = self._total_visible_lines()
+        if self._scroll_offset == 0:
+            return max(0, total - self._screen.lines)
+        start = max(0, total - self._screen.lines - self._scroll_offset)
+        return max(0, min(start, total - self._screen.lines))
 
     def _update_scrollbar(self):
         total = self._total_visible_lines()
@@ -479,7 +531,6 @@ class TerminalWidget(QWidget):
         if not self._screen or not self._stream:
             return
         self._stream.feed(text)
-        self._recalculate_size()
         self._scroll_to_bottom()
         self._update_scrollbar()
         if self._search_bar and self._search_bar.isVisible() and self._search_keyword:
@@ -622,13 +673,16 @@ class TerminalWidget(QWidget):
         log_start.triggered.connect(self._log_start)
         log_stop.triggered.connect(self._log_stop)
         log_open.triggered.connect(self._log_open_folder)
-        menu.exec(event.globalPos())
+        menu.exec_(QPoint(
+            min(event.globalPos().x(), self.window().x() + self.window().width() - menu.sizeHint().width()),
+            min(event.globalPos().y(), self.window().y() + self.window().height() - menu.sizeHint().height())
+        ))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self._screen:
             lnw = self._line_number_width()
-            x = int((event.position().x() - lnw) // self._char_width)
-            y = int(event.position().y() // self._char_height)
+            x = int((event.pos().x() - lnw) // self._char_width)
+            y = int(event.pos().y() // self._char_height)
             x = max(0, min(x, self._screen.columns - 1))
             y = max(0, min(y, self._screen.lines - 1))
             self._sel_start = (y, x)
@@ -639,8 +693,8 @@ class TerminalWidget(QWidget):
     def mouseMoveEvent(self, event):
         if self._selecting and self._screen:
             lnw = self._line_number_width()
-            x = int((event.position().x() - lnw) // self._char_width)
-            y = int(event.position().y() // self._char_height)
+            x = int((event.pos().x() - lnw) // self._char_width)
+            y = int(event.pos().y() // self._char_height)
             x = max(0, min(x, self._screen.columns - 1))
             y = max(0, min(y, self._screen.lines - 1))
             self._sel_end = (y, x)
@@ -791,7 +845,7 @@ class TerminalWidget(QWidget):
             self._search_bar._input.textChanged.connect(self._on_search_text)
             self._search_bar._prev.clicked.connect(self._search_prev)
             self._search_bar._next.clicked.connect(self._search_next)
-            self._search_bar._case.toggled.connect(self._on_search_text)
+            self._search_bar._case_act.triggered.connect(self._on_toggle_case)
             self._search_bar._close.clicked.connect(self._search_close)
         self._search_bar.show()
         self._search_bar.raise_()
@@ -807,9 +861,16 @@ class TerminalWidget(QWidget):
         self.setFocus()
         self.update()
 
-    def _on_search_text(self):
+    def _on_toggle_case(self):
+        if self._search_bar:
+            active = not self._search_bar._case_act.data()
+            self._search_bar._case_act.setData(active)
+            self._search_bar._update_case_icon()
+        self._on_search_text()
+
+    def _on_search_text(self, checked=None):
         keyword = self._search_bar._input.text() if self._search_bar else ""
-        self._search_case = self._search_bar._case.isChecked() if self._search_bar else False
+        self._search_case = bool(self._search_bar._case_act.data()) if self._search_bar else False
         # Close on empty escape sequence - handled by Esc in SearchBar
         self._search_keyword = keyword
         self._do_search()
@@ -859,6 +920,7 @@ class TerminalWidget(QWidget):
             return
         self._search_idx = (self._search_idx + 1) % len(self._search_matches)
         self._scroll_to_match()
+        self._update_search_label()
         self.update()
 
     def _search_prev(self):
@@ -866,6 +928,7 @@ class TerminalWidget(QWidget):
             return
         self._search_idx = (self._search_idx - 1) % len(self._search_matches)
         self._scroll_to_match()
+        self._update_search_label()
         self.update()
 
     def _scroll_to_match(self):
@@ -888,6 +951,12 @@ class TerminalWidget(QWidget):
                 return True
         return False
 
+    def _is_current_match(self, global_y, col):
+        if self._search_idx < 0 or self._search_idx >= len(self._search_matches):
+            return False
+        my, c1, c2 = self._search_matches[self._search_idx]
+        return my == global_y and c1 <= col < c2
+
     def _update_search_label(self):
         if not self._search_bar:
             return
@@ -901,7 +970,7 @@ class TerminalWidget(QWidget):
         safe_name = "".join(c for c in self._session_name if c.isalnum() or c in " _-")
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         suggested_name = f"{safe_name}_{ts}.log"
-        default_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", safe_name)
+        default_dir = os.path.join(get_data_dir(), "logs", safe_name)
         os.makedirs(default_dir, exist_ok=True)
         default_path = os.path.join(default_dir, suggested_name)
         parent = self.window() if self.window() else self

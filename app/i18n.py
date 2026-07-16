@@ -7,10 +7,10 @@ EN = {}
 def init():
     global ZH, EN
     ZH.update({
-        "app.name": "RatShell",
+        "app.name": "Frtty Pro",
         "app.version": "1.0.0",
 
-        "title_bar.title": "RatShell",
+        "title_bar.title": "Frtty Pro",
 
         "menu.session": "会话",
         "menu.session.new": "新建连接",
@@ -29,15 +29,12 @@ def init():
         "menu.view.fullscreen": "全屏",
         "menu.tools": "工具",
         "menu.tools.options": "选项设置",
-        "menu.tools.theme": "主题切换",
         "menu.tools.language": "切换语言",
 
-        "options.theme_dark": "暗色主题",
-        "options.theme_light": "亮色主题",
         "options.lang_zh": "中文",
         "options.lang_en": "English",
         "menu.help": "帮助",
-        "menu.help.about": "关于 RatShell",
+        "menu.help.about": "关于 Frtty Pro",
 
         "session_panel.title": "会话",
         "session_panel.filter": "筛选",
@@ -100,7 +97,7 @@ def init():
         "send_panel.input_placeholder": "输入命令... (Ctrl+Enter 发送)",
         "send_panel.clear": "清空",
 
-        "terminal.welcome_title": "RatShell v1.0",
+        "terminal.welcome_title": "Frtty Pro v1.0",
         "terminal.welcome_subtitle": "SSH / Serial / Telnet 终端",
         "terminal.welcome_hint": "文件 > 新建连接 开始使用",
         "terminal.connecting": "正在连接",
@@ -151,13 +148,18 @@ def init():
         "log.stopped": "日志记录已停止",
         "log.no_session": "无活动会话",
         "log.no_folder": "尚未开始记录日志",
+
+        "search.placeholder": "查找...",
+        "search.prev": "上一个",
+        "search.next": "下一个",
+        "search.close": "关闭",
     })
 
     EN.update({
-        "app.name": "RatShell",
+        "app.name": "Frtty Pro",
         "app.version": "1.0.0",
 
-        "title_bar.title": "RatShell",
+        "title_bar.title": "Frtty Pro",
 
         "menu.session": "Session",
         "menu.session.new": "New Connection",
@@ -176,15 +178,12 @@ def init():
         "menu.view.fullscreen": "Fullscreen",
         "menu.tools": "Tools",
         "menu.tools.options": "Options",
-        "menu.tools.theme": "Toggle Theme",
         "menu.tools.language": "Switch Language",
 
-        "options.theme_dark": "Dark Theme",
-        "options.theme_light": "Light Theme",
         "options.lang_zh": "中文",
         "options.lang_en": "English",
         "menu.help": "Help",
-        "menu.help.about": "About RatShell",
+        "menu.help.about": "About Frtty Pro",
 
         "session_panel.title": "Sessions",
         "session_panel.filter": "Filter",
@@ -247,7 +246,7 @@ def init():
         "send_panel.input_placeholder": "Enter command... (Ctrl+Enter to send)",
         "send_panel.clear": "Clear",
 
-        "terminal.welcome_title": "RatShell v1.0",
+        "terminal.welcome_title": "Frtty Pro v1.0",
         "terminal.welcome_subtitle": "SSH / Serial / Telnet Terminal",
         "terminal.welcome_hint": "File > New Connection to start",
         "terminal.connecting": "Connecting",
@@ -298,6 +297,11 @@ def init():
         "log.stopped": "Logging stopped",
         "log.no_session": "No active session",
         "log.no_folder": "No log folder yet",
+
+        "search.placeholder": "Find...",
+        "search.prev": "< Prev",
+        "search.next": "Next >",
+        "search.close": "Close",
     })
 
 

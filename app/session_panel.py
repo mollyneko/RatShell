@@ -1,17 +1,18 @@
 import json
 import os
 
-from PySide6.QtWidgets import (
+from PySide2.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QPushButton, QFrame, QSplitter,
     QListWidget, QListWidgetItem, QMenu
 )
-from PySide6.QtCore import Qt, Signal, QPoint
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QBrush, QPen
+from PySide2.QtCore import Qt, Signal, QPoint
+from PySide2.QtGui import QColor, QFont, QIcon, QPainter, QBrush, QPen
 from .i18n import tr
 from .logger import debug
+from .resources import get_data_dir
 
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+HISTORY_FILE = os.path.join(get_data_dir(), "history.json")
 MAX_HISTORY = 200
 
 COLOR_TAGS = {
@@ -200,12 +201,12 @@ class SessionTreePanel(QWidget):
                 return idx
         return self.add_session(name, conn_type, "connected")
 
-    def deactivate_to_saved(self, idx):
-        debug(f"SessionPanel.deactivate_to_saved idx={idx}")
+    def deactivate_to_saved(self, idx, saved_name=None):
+        debug(f"SessionPanel.deactivate_to_saved idx={idx} saved_name={saved_name}")
         if 0 <= idx < len(self._items):
             _, _, _, item = self._items.pop(idx)
             widget = self.list_widget.itemWidget(item)
-            name = widget.name_label.text() if (widget and hasattr(widget, 'name_label')) else ""
+            name = saved_name or (widget.name_label.text() if (widget and hasattr(widget, 'name_label')) else "")
             conn_type = widget.conn_type if widget else "ssh"
             if widget:
                 widget.update_status("saved")
@@ -354,16 +355,40 @@ class HistoryPanel(QWidget):
         """)
         self.history_list.itemClicked.connect(
             lambda item: self.command_selected.emit(item.text()))
+        self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.history_list.customContextMenuRequested.connect(self._on_history_context)
         layout.addWidget(self.history_list, 1)
 
         self._load_history()
 
     def add_command(self, cmd):
+        # Remove ALL previous occurrences, then insert at front
+        while cmd in self._cmds:
+            old_idx = self._cmds.index(cmd)
+            self._cmds.pop(old_idx)
+            row = self.history_list.count() - 1 - old_idx
+            item = self.history_list.takeItem(row)
+            if item:
+                del item
         self._cmds.append(cmd)
         item = QListWidgetItem(cmd)
         self.history_list.insertItem(0, item)
         if len(self._cmds) > MAX_HISTORY:
             removed = self._cmds.pop(0)
+            last_item = self.history_list.item(self.history_list.count() - 1)
+            if last_item:
+                self.history_list.takeItem(self.history_list.count() - 1)
+        self._save_history()
+
+    def record_command(self, cmd):
+        """Record command without reordering (used for click-send)."""
+        if cmd in self._cmds:
+            return
+        self._cmds.append(cmd)
+        item = QListWidgetItem(cmd)
+        self.history_list.insertItem(0, item)
+        if len(self._cmds) > MAX_HISTORY:
+            self._cmds.pop(0)
             last_item = self.history_list.item(self.history_list.count() - 1)
             if last_item:
                 self.history_list.takeItem(self.history_list.count() - 1)
@@ -380,7 +405,15 @@ class HistoryPanel(QWidget):
                 with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, list):
-                    self._cmds = data[-MAX_HISTORY:]
+                    # Deduplicate: keep only the LATEST occurrence of each cmd
+                    seen = set()
+                    deduped = []
+                    for cmd in reversed(data):
+                        if cmd not in seen:
+                            seen.add(cmd)
+                            deduped.append(cmd)
+                    deduped.reverse()
+                    self._cmds = deduped[-MAX_HISTORY:]
                     for cmd in reversed(self._cmds):
                         item = QListWidgetItem(cmd)
                         self.history_list.addItem(item)
@@ -393,6 +426,16 @@ class HistoryPanel(QWidget):
                 json.dump(self._cmds[-MAX_HISTORY:], f, ensure_ascii=False)
         except Exception:
             pass
+
+    def _on_history_context(self, pos):
+        item = self.history_list.itemAt(pos)
+        if not item:
+            return
+        from PySide2.QtWidgets import QApplication
+        menu = QMenu(self)
+        copy_act = menu.addAction(tr("menu.edit.copy"))
+        copy_act.triggered.connect(lambda: QApplication.clipboard().setText(item.text()))
+        menu.exec_(self.history_list.mapToGlobal(pos))
 
     def update_strings(self):
         self._history_title.setText("\u25c6 " + tr("session_panel.history"))

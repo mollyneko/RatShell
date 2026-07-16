@@ -20,7 +20,7 @@ class SerialConnection(BaseConnection):
     def display_name(self):
         return f"Serial: {self._port} ({self._baudrate} baud)"
 
-    def connect(self):
+    def start(self):
         debug(f"Serial connect {self._port} {self._baudrate}baud")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()

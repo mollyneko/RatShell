@@ -1,6 +1,7 @@
 import json
 import os
 from .logger import debug
+from .resources import get_data_dir
 
 SESSIONS_DIR = None
 
@@ -9,7 +10,7 @@ def _ensure_dir():
     debug("session_manager._ensure_dir")
     global SESSIONS_DIR
     if SESSIONS_DIR is None:
-        SESSIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions")
+        SESSIONS_DIR = os.path.join(get_data_dir(), "sessions")
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 

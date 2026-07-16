@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QApplication
-from PySide6.QtCore import Qt, Signal, QPoint, QPropertyAnimation, QEasingCurve, Property
-from PySide6.QtGui import QFont, QPainter, QColor, QLinearGradient, QBrush, QPen
+from PySide2.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QApplication
+from PySide2.QtCore import Qt, Signal, QPoint, QPropertyAnimation, QEasingCurve, Property
+from PySide2.QtGui import QFont, QPainter, QColor, QLinearGradient, QBrush, QPen
 from .i18n import tr
 from .logger import debug
 
@@ -87,14 +87,14 @@ class TitleBar(QWidget):
     def mousePressEvent(self, event):
         debug("TitleBar.mousePressEvent", event.pos())
         if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
+            self._drag_pos = event.globalPos()
 
     def mouseMoveEvent(self, event):
         debug("TitleBar.mouseMoveEvent", event.pos())
         if self._drag_pos is not None and self._parent:
-            delta = event.globalPosition().toPoint() - self._drag_pos
+            delta = event.globalPos() - self._drag_pos
             self._parent.move(self._parent.pos() + delta)
-            self._drag_pos = event.globalPosition().toPoint()
+            self._drag_pos = event.globalPos()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:

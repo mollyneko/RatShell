@@ -1,8 +1,0 @@
-{
-  "type": "ssh",
-  "host": "10.2.4.152",
-  "port": 22,
-  "username": "jintao.lin",
-  "password": "931719774",
-  "display_name": "编译服务器"
-}

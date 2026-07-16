@@ -1,9 +1,0 @@
-{
-  "type": "serial",
-  "port": "COM16",
-  "baudrate": 115200,
-  "bytesize": 8,
-  "parity": "N",
-  "stopbits": 1.0,
-  "display_name": "160"
-}

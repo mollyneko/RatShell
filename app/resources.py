@@ -1,6 +1,25 @@
-APP_NAME = "RatShell"
-APP_VERSION = "1.2.3"
+APP_NAME = "Frtty Pro"
+APP_VERSION = "1.2.7"
 ORG_NAME = "RatStudio"
+
+import os
+
+
+def get_data_dir():
+    """Return a persistent user data directory (not temp frozen dir)."""
+    base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+    d = os.path.join(base, ORG_NAME, APP_NAME.replace(" ", ""))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def get_app_dir():
+    """Return the directory where app data files (icons, etc.) are stored.
+    Works both in development and PyInstaller frozen mode."""
+    import sys
+    if getattr(sys, "frozen", False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 DARK_THEME = """
 QWidget {
@@ -270,72 +289,5 @@ QListWidget::item:selected {
 }
 """
 
-LIGHT_THEME = """
-QWidget {
-    background-color: #eff1f5;
-    color: #4c4f69;
-    font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace;
-    font-size: 13px;
-}
-QMainWindow { background-color: #eff1f5; }
-QPushButton {
-    background-color: #e6e9ef;
-    color: #4c4f69;
-    border: 1px solid #ccd0da;
-    border-radius: 6px;
-    padding: 6px 16px;
-}
-QPushButton:hover { background-color: #ccd0da; }
-QPushButton#accentBtn {
-    background-color: #1e66f5;
-    color: #ffffff;
-    border: none;
-}
-QPushButton#accentBtn:hover { background-color: #2a7cf6; }
-QLineEdit, QPlainTextEdit, QTextEdit {
-    background-color: #e6e9ef;
-    color: #4c4f69;
-    border: 1px solid #ccd0da;
-    border-radius: 6px;
-    padding: 8px 12px;
-}
-QLineEdit:focus { border-color: #1e66f5; }
-QTabWidget::pane {
-    background-color: #eff1f5;
-    border-top: 1px solid #ccd0da;
-}
-QTabBar::tab {
-    background-color: #eff1f5;
-    color: #9ca0b0;
-    border-bottom: 2px solid transparent;
-    padding: 8px 16px;
-}
-QTabBar::tab:hover { color: #4c4f69; }
-QTabBar::tab:selected {
-    color: #1e66f5;
-    border-bottom: 2px solid #1e66f5;
-}
-QScrollBar:vertical { background: #eff1f5; width: 8px; }
-QScrollBar::handle:vertical { background: #ccd0da; border-radius: 4px; }
-QMenu {
-    background-color: #e6e9ef;
-    color: #4c4f69;
-    border: 1px solid #ccd0da;
-    border-radius: 8px;
-}
-QMenu::item:selected { background-color: #ccd0da; }
-QGroupBox {
-    border: 1px solid #ccd0da;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 16px;
-    color: #1e66f5;
-}
-"""
-
-
-def apply_theme(app, theme_name="dark"):
-    if theme_name == "light":
-        app.setStyleSheet(LIGHT_THEME)
-    else:
-        app.setStyleSheet(DARK_THEME)
+def apply_theme(app):
+    app.setStyleSheet(DARK_THEME)
