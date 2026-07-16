@@ -1,8 +1,22 @@
 import threading
 import time
+import re
 import serial
 from .base_connection import BaseConnection
 from ..logger import debug
+
+
+# Keyword-to-ANSI-color mapping for serial output highlighting
+_SERIAL_HIGHLIGHT = [
+    (re.compile(r'(ERROR|FATAL|FAIL|CRITICAL)', re.IGNORECASE), '\x1b[31;1m'),       # bold red
+    (re.compile(r'(WARN|WARNING|TIMEOUT)', re.IGNORECASE), '\x1b[33;1m'),              # bold yellow
+    (re.compile(r'(INFO|OK[^K]|DONE|SUCCESS)', re.IGNORECASE), '\x1b[32;1m'),          # bold green
+    (re.compile(r'(DEBUG|TRACE)', re.IGNORECASE), '\x1b[36m'),                          # cyan
+    (re.compile(r'(U-BOOT|uboot|U-Boot|Booting|Kernel)', re.IGNORECASE), '\x1b[95;1m'), # bold magenta
+    (re.compile(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'), '\x1b[94m'),               # bright blue (IPs)
+    (re.compile(r'(# |\$ |~ )'), '\x1b[92;1m'),                                          # bold bright green prompts
+    (re.compile(r'(Press.*key.*stop|Hit any key)'), '\x1b[93;1m'),                       # bold bright yellow notices
+]
 
 
 class SerialConnection(BaseConnection):
@@ -19,6 +33,15 @@ class SerialConnection(BaseConnection):
     @property
     def display_name(self):
         return f"Serial: {self._port} ({self._baudrate} baud)"
+
+    @staticmethod
+    def _highlight(text):
+        """Apply ANSI color codes to serial output based on keywords."""
+        if not text:
+            return text
+        for pattern, ansi in _SERIAL_HIGHLIGHT:
+            text = pattern.sub(ansi + r'\1' + '\x1b[0m', text)
+        return text
 
     def start(self):
         debug(f"Serial connect {self._port} {self._baudrate}baud")
@@ -51,7 +74,7 @@ class SerialConnection(BaseConnection):
                         text = data.decode("utf-8", errors="replace")
                     except Exception:
                         text = data.decode("latin-1", errors="replace")
-                    self._emit_output(text)
+                    self._emit_output(self._highlight(text))
                 else:
                     time.sleep(0.02)
 
@@ -62,7 +85,11 @@ class SerialConnection(BaseConnection):
             except RuntimeError:
                 pass
         except Exception as e:
-            debug(f"Serial error: {e}")
+            debug(f"Serial error in _run: {e}")
+            try:
+                self.error_occurred.emit(str(e))
+            except RuntimeError:
+                pass
         finally:
             self._running = False
             if self._ser and self._ser.is_open:

@@ -85,16 +85,12 @@ class SessionTreeItem(QWidget):
 
 
 class SessionTreePanel(QWidget):
-    session_selected = Signal(int)
     saved_session_clicked = Signal(str)
-    session_context_menu = Signal(int, QPoint)
     edit_saved = Signal(str, QPoint)
-    active_dbl_click = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._items = []
-        self._saved_items = []
+        self._saved_items = []  # (name, conn_type, QListWidgetItem)
         self.setStyleSheet("background: transparent;")
 
         layout = QVBoxLayout(self)
@@ -161,17 +157,6 @@ class SessionTreePanel(QWidget):
         self.list_widget.customContextMenuRequested.connect(self._on_list_context)
         layout.addWidget(self.list_widget, 1)
 
-    def add_session(self, name, conn_type="ssh", status="connected"):
-        debug(f"SessionPanel.add_session name={name} type={conn_type} status={status}")
-        item = QListWidgetItem()
-        widget = SessionTreeItem(name, conn_type, status)
-        item.setSizeHint(widget.minimumSizeHint())
-        self.list_widget.addItem(item)
-        self.list_widget.setItemWidget(item, widget)
-        self._items.append((name, conn_type, status, item))
-        self._update_count()
-        return len(self._items) - 1
-
     def add_saved_session(self, name, conn_type="ssh"):
         item = QListWidgetItem()
         widget = SessionTreeItem(name, conn_type, "saved")
@@ -180,61 +165,6 @@ class SessionTreePanel(QWidget):
         self.list_widget.setItemWidget(item, widget)
         self._saved_items.append((name, conn_type, item))
         self._update_count()
-
-    def find_session(self, name):
-        for idx, (sname, _, _, _) in enumerate(self._items):
-            if sname == name:
-                return idx
-        return -1
-
-    def activate_saved(self, name, conn_type="ssh"):
-        debug(f"SessionPanel.activate_saved name={name} type={conn_type}")
-        for i, (sname, stype, sitem) in enumerate(self._saved_items):
-            if sname == name:
-                self._saved_items.pop(i)
-                widget = self.list_widget.itemWidget(sitem)
-                if widget:
-                    widget.update_status("connected")
-                self._items.append((name, conn_type, "connected", sitem))
-                idx = len(self._items) - 1
-                self._update_count()
-                return idx
-        return self.add_session(name, conn_type, "connected")
-
-    def deactivate_to_saved(self, idx, saved_name=None):
-        debug(f"SessionPanel.deactivate_to_saved idx={idx} saved_name={saved_name}")
-        if 0 <= idx < len(self._items):
-            _, _, _, item = self._items.pop(idx)
-            widget = self.list_widget.itemWidget(item)
-            name = saved_name or (widget.name_label.text() if (widget and hasattr(widget, 'name_label')) else "")
-            conn_type = widget.conn_type if widget else "ssh"
-            if widget:
-                widget.update_status("saved")
-            self._saved_items.append((name, conn_type, item))
-            self._update_count()
-
-    def _update_count(self):
-        self.count_label.setText(f"{len(self._items)}+{len(self._saved_items)}")
-
-    def update_session(self, idx, name=None, status=None):
-        if 0 <= idx < len(self._items):
-            _, conn_type, old_status, item = self._items[idx]
-            if name:
-                self._items[idx] = (name, conn_type, status or old_status, item)
-            if status:
-                self._items[idx] = (self._items[idx][0], conn_type, status, item)
-            widget = self.list_widget.itemWidget(item)
-            if widget and status:
-                widget.update_status(status)
-            if widget and name:
-                widget.name = name
-
-    def remove_session(self, idx):
-        if 0 <= idx < len(self._items):
-            _, _, _, item = self._items[idx]
-            self.list_widget.takeItem(self.list_widget.row(item))
-            self._items.pop(idx)
-            self._update_count()
 
     def remove_saved(self, name):
         for i, (sname, _, sitem) in enumerate(self._saved_items):
@@ -246,18 +176,24 @@ class SessionTreePanel(QWidget):
                 self._update_count()
                 return
 
+    def update_saved_status(self, name, status):
+        """Update the status indicator on a saved-session item."""
+        for sname, _, sitem in self._saved_items:
+            if sname == name:
+                widget = self.list_widget.itemWidget(sitem)
+                if widget:
+                    widget.update_status(status)
+                return
+
     def clear_all(self):
         self.list_widget.clear()
-        self._items.clear()
         self._saved_items.clear()
         self._update_count()
 
+    def _update_count(self):
+        self.count_label.setText(str(len(self._saved_items)))
+
     def _on_filter(self, text):
-        for name, _, _, item in self._items:
-            row = self.list_widget.row(item)
-            it = self.list_widget.item(row)
-            if it:
-                it.setHidden(text.lower() not in name.lower() if text else False)
         for name, _, item in self._saved_items:
             row = self.list_widget.row(item)
             it = self.list_widget.item(row)
@@ -265,29 +201,18 @@ class SessionTreePanel(QWidget):
                 it.setHidden(text.lower() not in name.lower() if text else False)
 
     def _on_item_clicked(self, item):
-        for idx, (name, _, _, it) in enumerate(self._items):
-            if it is item:
-                self.session_selected.emit(idx)
-                return
+        pass  # Clicking a saved session does nothing — only double-click opens
 
     def _on_item_double_clicked(self, item):
         for name, _, it in self._saved_items:
             if it is item:
                 self.saved_session_clicked.emit(name)
                 return
-        for idx, (_, _, _, it) in enumerate(self._items):
-            if it is item:
-                self.active_dbl_click.emit(idx)
-                return
 
     def _on_list_context(self, pos):
         item = self.list_widget.itemAt(pos)
         if not item:
             return
-        for idx, (name, _, _, it) in enumerate(self._items):
-            if it is item:
-                self.session_context_menu.emit(idx, self.list_widget.mapToGlobal(pos))
-                return
         for name, _, it in self._saved_items:
             if it is item:
                 self.edit_saved.emit(name, self.list_widget.mapToGlobal(pos))

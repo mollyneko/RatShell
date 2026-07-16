@@ -261,6 +261,7 @@ class ConnectionDialog(QDialog):
         self.ser_port.setEditable(True)
         self.ser_port.setMinimumHeight(36)
         self.ser_port.setStyleSheet(combo_style)
+        self.ser_port.installEventFilter(self)
         self._refresh_com_ports()
         f.addRow(self._label(tr("serial.port")), self.ser_port)
 
@@ -336,6 +337,13 @@ class ConnectionDialog(QDialog):
         self.type_combo.currentIndexChanged.connect(self.stack.setCurrentIndex)
         if not self._edit_data:
             self.session_combo.currentIndexChanged.connect(self._on_session_selected)
+
+    def eventFilter(self, obj, event):
+        """Catch mouse press on editable serial port combo to show dropdown."""
+        if obj is self.ser_port and event.type() == event.MouseButtonPress:
+            self.ser_port.showPopup()
+            return True
+        return super().eventFilter(obj, event)
 
     def _on_session_selected(self, idx):
         if idx <= 0:

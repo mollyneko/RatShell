@@ -283,6 +283,12 @@ class TerminalWidget(QWidget):
 
         self._welcome()
 
+    def focusNextPrevChild(self, next_child):
+        """Prevent Tab/Shift+Tab from moving focus away from the terminal.
+        The Tab key must be sent to the remote connection, not used for Qt
+        widget navigation."""
+        return False
+
     def _line_number_width(self):
         if not self._line_numbers or not self._screen:
             return 0

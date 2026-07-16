@@ -319,13 +319,10 @@ class MainWindow(QMainWindow):
         self._sessions = []
         self._conn_type_map = {}
         self._reconnecting = set()
-        self._saved_to_sid = {}
-        self._sid_refcount = {}
-        self._name_refcount = {}
-        # uid is a never-reused unique tab ID; uid -> {items_index, session_id} mapping
+        # uid is a never-reused unique tab ID; the core identifier for all session state
         self._next_uid = 0
-        self._uid_info = {}
-        self._items_idx_by_uid = {}
+        self._uid_info = {}  # uid -> {tab_idx, conn_type, label, conn, saved_name?}
+        self._tab_idx_to_uid = {}  # tab_widget idx -> uid
 
         central = QWidget()
         central.setObjectName("centralWidget")
@@ -362,7 +359,7 @@ class MainWindow(QMainWindow):
         self.color_tab_bar.tab_selected.connect(self._on_color_tab_selected)
         self.color_tab_bar.new_tab.connect(self._on_new_connection)
         self.color_tab_bar.tab_context_menu.connect(self._on_tab_context_menu)
-        self.color_tab_bar.tab_close_clicked.connect(self._close_tab)
+        self.color_tab_bar.tab_close_clicked.connect(self._on_tab_close_clicked)
         root.addWidget(self.color_tab_bar)
 
         body = QHBoxLayout()
@@ -454,8 +451,8 @@ class MainWindow(QMainWindow):
         session_menu.addAction(act(tr("menu.session.exit"), "Ctrl+Q", self.close))
 
         edit_menu = bar.addMenu(tr("menu.edit"))
-        edit_menu.addAction(act(tr("menu.edit.copy"), "Ctrl+C", self._on_copy))
-        edit_menu.addAction(act(tr("menu.edit.paste"), "Ctrl+V", self._on_paste))
+        edit_menu.addAction(act(tr("menu.edit.copy"), "Ctrl+Shift+C", self._on_copy))
+        edit_menu.addAction(act(tr("menu.edit.paste"), "Ctrl+Shift+V", self._on_paste))
         edit_menu.addAction(act(tr("menu.edit.select_all"), "Ctrl+A", self._on_select_all))
 
         view_menu = bar.addMenu(tr("menu.view"))
@@ -500,11 +497,8 @@ class MainWindow(QMainWindow):
         dl.setSpacing(0)
 
         self.session_panel = SessionTreePanel()
-        self.session_panel.session_selected.connect(self._on_session_panel_click)
         self.session_panel.saved_session_clicked.connect(self._on_saved_session_click)
-        self.session_panel.session_context_menu.connect(self._on_session_context_menu)
         self.session_panel.edit_saved.connect(self._on_edit_saved)
-        self.session_panel.active_dbl_click.connect(self._on_active_dbl_click)
         dl.addWidget(self.session_panel, 1)
 
         sep = QFrame()
@@ -556,6 +550,9 @@ class MainWindow(QMainWindow):
 
     def _start_connection(self, config, from_saved=None):
         debug(f"_start_connection type={config.get('type')} host={config.get('host')} port={config.get('port')} from_saved={from_saved}")
+        # Always create a new tab — even if a tab with the same name already
+        # exists.  The caller is responsible for not duplicating the right-side
+        # saved-session list entry.
         try:
             conn = create_connection(config)
         except Exception as e:
@@ -563,19 +560,15 @@ class MainWindow(QMainWindow):
             return
         conn_type = config.get("type", "ssh")
         label = config.get("display_name") or conn.display_name
+        uid = self._next_uid
+        self._next_uid += 1
         if from_saved:
-            sid = self.session_panel.activate_saved(from_saved, conn_type)
-            self._saved_to_sid[from_saved] = sid
-            self._sid_refcount[sid] = self._sid_refcount.get(sid, 0) + 1
-        else:
-            sid = self.session_panel.add_session(label, conn_type, "connected")
-            self._sid_refcount[sid] = 1
-        self._name_refcount[label] = self._name_refcount.get(label, 0) + 1
+            self.session_panel.update_saved_status(from_saved, "connected")
         self._save_last_session(config, from_saved)
-        self._create_tab(conn, label, sid, conn_type)
-        return sid
+        self._create_tab(conn, uid, label, conn_type, saved_name=from_saved)
+        return uid
 
-    def _create_tab(self, conn, label, sid, conn_type=None):
+    def _create_tab(self, conn, uid, label, conn_type=None, saved_name=None):
         tab = SessionTab(conn)
         tab.terminal.set_session_name(label)
         idx = self.tab_widget.addTab(tab, label)
@@ -584,79 +577,82 @@ class MainWindow(QMainWindow):
             conn_type = conn.config.get("type", "ssh")
         self._conn_type_map[idx] = conn_type
         self.color_tab_bar.add_tab(label, conn_type)
-        conn.connected.connect(lambda i=idx, s=sid: self._on_tab_connected(i, s))
-        conn.disconnected.connect(lambda msg, i=idx, s=sid: self._on_tab_disconnected(i, s, msg))
-        conn.error_occurred.connect(lambda msg, i=idx, s=sid: self._on_tab_error(i, s, msg))
+        # Store all state keyed by uid — saved_name tracked so disconnect can return the item to saved state
+        info = {"tab_idx": idx, "label": label, "conn": conn, "conn_type": conn_type}
+        if saved_name:
+            info["saved_name"] = saved_name
+        self._uid_info[uid] = info
+        self._tab_idx_to_uid[idx] = uid
+        tab._uid = uid
+        # Connect signals using uid (never recycled)
+        conn.connected.connect(lambda u=uid: self._on_tab_connected(u))
+        conn.disconnected.connect(lambda msg, u=uid: self._on_tab_disconnected(u, msg))
+        conn.error_occurred.connect(lambda msg, u=uid: self._on_tab_error(u, msg))
         tab.terminal.command_sent.connect(self.history_panel.add_command)
-        tab._session_id = sid
-        debug(f"  create_tab idx={idx} sid={sid} label={label}")
+        debug(f"  create_tab idx={idx} uid={uid} label={label}")
         conn.start()
         self._sessions.append(tab)
 
-    def _on_tab_connected(self, idx, sid):
-        debug(f"_on_tab_connected idx={idx} sid={sid}")
-        self._reconnecting.discard(idx)
-        if 0 <= idx < self.tab_widget.count():
-            tab = self.tab_widget.widget(idx)
-            if tab:
-                cfg = tab.connection.config
-                name = cfg.get("display_name") or tab.connection.display_name
-                self.tab_widget.setTabText(idx, name)
-                self.color_tab_bar.set_tab_label(idx, name)
-                self.color_tab_bar.set_tab_connected(idx, True)
-                self.session_panel.update_session(sid, None, "connected")
-                self.status_bar.set_status(name, "#a6e3a1")
-
-    def _on_tab_disconnected(self, idx, sid, msg):
-        debug(f"_on_tab_disconnected idx={idx} sid={sid} msg={msg}")
-        if idx in self._reconnecting:
+    def _on_tab_connected(self, uid):
+        debug(f"_on_tab_connected uid={uid}")
+        info = self._uid_info.get(uid)
+        if info is None:
+            debug(f"  stale connected signal for uid {uid}")
             return
-        # If sid was already cleaned up by _close_tab, ignore stale signal
-        if sid not in self._sid_refcount:
-            debug(f"  stale signal, sid {sid} already cleaned up")
+        idx = info["tab_idx"]
+        self._reconnecting.discard(idx)
+        cfg = info["conn"].config
+        name = cfg.get("display_name") or info["conn"].display_name
+        self.tab_widget.setTabText(idx, name)
+        self.color_tab_bar.set_tab_label(idx, name)
+        self.color_tab_bar.set_tab_connected(idx, True)
+        saved_name = info.get("saved_name")
+        if saved_name:
+            self.session_panel.update_saved_status(saved_name, "connected")
+        self.status_bar.set_status(name, "#a6e3a1")
+
+    def _on_tab_disconnected(self, uid, msg):
+        debug(f"_on_tab_disconnected uid={uid} msg={msg}")
+        info = self._uid_info.get(uid)
+        if info is None:
+            debug(f"  stale disconnected signal for uid {uid}")
+            return
+        idx = info["tab_idx"]
+        if idx in self._reconnecting:
             return
         if 0 <= idx < self.tab_widget.count():
             self.color_tab_bar.set_tab_connected(idx, False)
-        saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-        # Check if another tab with the same name is still connected
-        tab = self.tab_widget.widget(idx) if 0 <= idx < self.tab_widget.count() else None
-        name = ""
-        if tab and hasattr(tab, 'connection'):
-            cfg = tab.connection.config
-            name = cfg.get("display_name") or tab.connection.display_name
-        if not name or self._name_refcount.get(name, 0) <= 1:
-            if saved:
-                self.session_panel.update_session(sid, status="disconnected")
-            else:
-                self.session_panel.update_session(sid, status="disconnected")
+        saved_name = info.get("saved_name")
+        if saved_name:
+            self.session_panel.update_saved_status(saved_name, "disconnected")
         if idx == self.tab_widget.currentIndex():
             self.status_bar.set_status("Disconnected", "#f38ba8")
 
-    def _on_tab_error(self, idx, sid, msg):
-        debug(f"_on_tab_error idx={idx} sid={sid} msg={msg}")
-        self._reconnecting.discard(idx)
-        # If sid was already cleaned up by _close_tab, ignore stale signal
-        if sid not in self._sid_refcount:
-            debug(f"  stale error signal, sid {sid} already cleaned up")
+    def _on_tab_error(self, uid, msg):
+        debug(f"_on_tab_error uid={uid} msg={msg}")
+        info = self._uid_info.get(uid)
+        if info is None:
+            debug(f"  stale error signal for uid {uid}")
             return
-        saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-        # Check if another tab with the same name is still connected
-        tab = self.tab_widget.widget(idx) if 0 <= idx < self.tab_widget.count() else None
-        name = ""
-        if tab and hasattr(tab, 'connection'):
-            cfg = tab.connection.config
-            name = cfg.get("display_name") or tab.connection.display_name
-        if not name or self._name_refcount.get(name, 0) <= 1:
-            if saved:
-                self.session_panel.update_session(sid, status="disconnected")
-            else:
-                self.session_panel.update_session(sid, status="disconnected")
+        idx = info["tab_idx"]
+        self._reconnecting.discard(idx)
+        if 0 <= idx < self.tab_widget.count():
+            self.color_tab_bar.set_tab_connected(idx, False)
+        saved_name = info.get("saved_name")
+        if saved_name:
+            self.session_panel.update_saved_status(saved_name, "disconnected")
         if idx == self.tab_widget.currentIndex():
             self.status_bar.set_status(f"Error: {msg}", "#f38ba8")
 
     def _on_color_tab_selected(self, idx):
         if 0 <= idx < self.tab_widget.count():
             self.tab_widget.setCurrentIndex(idx)
+
+    def _on_tab_close_clicked(self, idx):
+        """Bridge from TabBarWidget's idx-based close signal to uid-based _close_tab."""
+        uid = self._tab_idx_to_uid.get(idx, -1)
+        if uid >= 0:
+            self._close_tab(uid)
 
     def _on_quick_command(self, text):
         tab = self.tab_widget.currentWidget()
@@ -684,10 +680,6 @@ class MainWindow(QMainWindow):
         else:
             self.status_bar.set_status(tr("status.disconnected"), "#f38ba8")
 
-    def _on_session_panel_click(self, idx):
-        if 0 <= idx < self.tab_widget.count():
-            self.tab_widget.setCurrentIndex(idx)
-
     def _load_saved_sessions(self):
         from .session_manager import list_sessions
         for name, data in list_sessions():
@@ -696,31 +688,12 @@ class MainWindow(QMainWindow):
 
     def _on_saved_session_click(self, name):
         debug(f"_on_saved_session_click name={name}")
+        # Always open a new tab, even if a tab for this saved session already exists.
         from .session_manager import load_session
         data = load_session(name)
         if not data:
             return
-        if name in self._saved_to_sid:
-            sid = self._saved_to_sid[name]
-            self._sid_refcount[sid] = self._sid_refcount.get(sid, 0) + 1
-            conn = create_connection(data)
-            label = data.get("display_name") or conn.display_name
-            self._create_tab(conn, label, sid, data.get("type", "ssh"))
-        else:
-            self._start_connection(data, from_saved=name)
-
-    def _on_active_dbl_click(self, idx):
-        debug(f"_on_active_dbl_click idx={idx}")
-        if 0 <= idx < self.tab_widget.count():
-            tab = self.tab_widget.widget(idx)
-            if tab and hasattr(tab, 'connection') and hasattr(tab.connection, 'config'):
-                from .connections import create_connection
-                cfg = tab.connection.config
-                sid = getattr(tab, '_session_id', 0)
-                self._sid_refcount[sid] = self._sid_refcount.get(sid, 0) + 1
-                conn = create_connection(cfg)
-                label = cfg.get("display_name") or conn.display_name
-                self._create_tab(conn, label, sid, cfg.get("type", "ssh"))
+        self._start_connection(data, from_saved=name)
 
     def _on_edit_saved(self, name, pos):
         from .session_manager import load_session, save_session
@@ -762,7 +735,6 @@ class MainWindow(QMainWindow):
                 name = new_cfg.get("display_name") or tab.connection.display_name
                 self.tab_widget.setTabText(idx, name)
                 self.color_tab_bar.set_tab_label(idx, name)
-                sid = getattr(tab, '_session_id', 0)
                 if new_cfg.get("display_name"):
                     save_session(new_cfg["display_name"], new_cfg)
 
@@ -781,68 +753,57 @@ class MainWindow(QMainWindow):
             QMenu::item:selected { background: #45475a; }
             QMenu::separator { height: 1px; background: #45475a; margin: 4px 8px; }
         """)
+        uid = self._tab_idx_to_uid.get(idx, -1)
         a_disconnect = menu.addAction(tr("context.disconnect"))
-        a_disconnect.triggered.connect(lambda: self._disconnect_tab(idx))
+        a_disconnect.triggered.connect(lambda: self._disconnect_tab(uid))
         a_reconnect = menu.addAction(tr("context.reconnect"))
-        a_reconnect.triggered.connect(lambda: self._reconnect_tab(idx))
+        a_reconnect.triggered.connect(lambda: self._reconnect_tab(uid))
         menu.addSeparator()
         a_close = menu.addAction(tr("context.close"))
-        a_close.triggered.connect(lambda: self._close_tab(idx))
+        a_close.triggered.connect(lambda: self._close_tab(uid))
         self._exec_menu_clamped(menu, pos)
 
-    def _on_session_context_menu(self, idx, pos):
-        menu = QMenu(self)
-        menu.setStyleSheet(self._menu_style())
-        a_disconnect = menu.addAction(tr("context.disconnect"))
-        a_disconnect.triggered.connect(lambda: self._disconnect_tab(idx))
-        a_reconnect = menu.addAction(tr("context.reconnect"))
-        a_reconnect.triggered.connect(lambda: self._reconnect_tab(idx))
-        menu.addSeparator()
-        a_edit = menu.addAction(tr("session_panel.edit_session"))
-        a_edit.triggered.connect(lambda: self._edit_active_session(idx))
-        a_close = menu.addAction(tr("context.close"))
-        a_close.triggered.connect(lambda: self._close_tab(idx))
-        self._exec_menu_clamped(menu, pos)
-
-    def _disconnect_tab(self, idx):
+    def _disconnect_tab(self, uid):
+        info = self._uid_info.get(uid)
+        if info is None:
+            return
+        idx = info["tab_idx"]
         if 0 <= idx < self.tab_widget.count():
             tab = self.tab_widget.widget(idx)
             if tab:
                 tab.terminal.disconnect()
                 tab.connection.disconnect()
-            sid = getattr(tab, '_session_id', 0)
-            saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-            cfg = tab.connection.config if (tab and hasattr(tab, 'connection')) else {}
-            name = cfg.get("display_name") or tab.connection.display_name if tab else ""
-            if saved and self._sid_refcount.get(sid, 0) <= 1:
-                del self._saved_to_sid[saved]
-                self.session_panel.deactivate_to_saved(sid)
-            elif not saved:
-                if not name or self._name_refcount.get(name, 0) <= 1:
-                    self.session_panel.update_session(sid, status="disconnected")
+            saved_name = info.get("saved_name")
+            if saved_name:
+                self.session_panel.update_saved_status(saved_name, "disconnected")
+            name = info["label"]
             self.color_tab_bar.set_tab_label(idx, name + " (off)")
             self.status_bar.set_status(tr("status.disconnected"), "#f38ba8")
 
-    def _reconnect_tab(self, idx):
-        debug(f"_reconnect_tab idx={idx}")
+    def _reconnect_tab(self, uid):
+        debug(f"_reconnect_tab uid={uid}")
+        info = self._uid_info.get(uid)
+        if info is None:
+            return
+        idx = info["tab_idx"]
         if 0 <= idx < self.tab_widget.count():
             tab = self.tab_widget.widget(idx)
             if tab:
                 self._reconnecting.add(idx)
-                cfg = tab.connection.config
-                sid = getattr(tab, '_session_id', 0)
+                cfg = info["conn"].config
                 tab.terminal.disconnect()
-                tab.connection.disconnect()
+                info["conn"].disconnect()
                 tab.terminal._closed = False
                 tab.terminal.clear()
                 tab.terminal._welcome()
-                reconnect_label = cfg.get("display_name") or tab.connection.display_name
+                reconnect_label = cfg.get("display_name") or info["conn"].display_name
                 tab.terminal._process_output(f"\x1b[32m\u2192 Reconnecting to {reconnect_label}...\x1b[0m\n")
                 from .connections import create_connection
                 new_conn = create_connection(cfg)
-                new_conn.connected.connect(lambda i=idx, s=sid: self._on_tab_connected(i, s))
-                new_conn.disconnected.connect(lambda msg, i=idx, s=sid: self._on_tab_disconnected(i, s, msg))
-                new_conn.error_occurred.connect(lambda msg, i=idx, s=sid: self._on_tab_error(i, s, msg))
+                new_conn.connected.connect(lambda u=uid: self._on_tab_connected(u))
+                new_conn.disconnected.connect(lambda msg, u=uid: self._on_tab_disconnected(u, msg))
+                new_conn.error_occurred.connect(lambda msg, u=uid: self._on_tab_error(u, msg))
+                info["conn"] = new_conn
                 tab.connection = new_conn
                 tab.terminal.set_connection(new_conn)
                 new_conn.start()
@@ -852,8 +813,9 @@ class MainWindow(QMainWindow):
 
     def _close_current(self):
         idx = self.tab_widget.currentIndex()
-        if idx >= 0:
-            self._close_tab(idx)
+        uid = self._tab_idx_to_uid.get(idx, -1)
+        if uid >= 0:
+            self._close_tab(uid)
 
     def _on_send_command(self, text):
         tab = self.tab_widget.currentWidget()
@@ -871,43 +833,41 @@ class MainWindow(QMainWindow):
             tab.terminal._connection.send(cmd + "\n")
             self.history_panel.record_command(cmd)
 
-    def _close_tab(self, idx):
-        debug(f"_close_tab idx={idx}")
-        if 0 <= idx < self.tab_widget.count():
-            tab = self.tab_widget.widget(idx)
-            if tab:
-                tab.terminal.disconnect()
-                tab.connection.disconnect()
-            sid = getattr(tab, '_session_id', 0)
-            saved = next((k for k, v in self._saved_to_sid.items() if v == sid), None)
-            ref = self._sid_refcount.get(sid, 0) - 1
-            if ref > 0:
-                self._sid_refcount[sid] = ref
-            else:
-                self._sid_refcount.pop(sid, None)
-                if saved:
-                    del self._saved_to_sid[saved]
-                    self.session_panel.deactivate_to_saved(sid, saved)
-                else:
-                    self.session_panel.remove_session(sid)
-            # Decrement name refcount
-            if tab and hasattr(tab, 'connection'):
-                cfg = tab.connection.config
-                name = cfg.get("display_name") or tab.connection.display_name
-                nref = self._name_refcount.get(name, 0) - 1
-                if nref > 0:
-                    self._name_refcount[name] = nref
-                else:
-                    self._name_refcount.pop(name, None)
-            self.color_tab_bar.remove_tab(idx)
-            self.tab_widget.removeTab(idx)
-            # Re-index _conn_type_map: shift entries after removed idx down
-            for i in range(idx + 1, self.tab_widget.count() + 1):
-                if i in self._conn_type_map:
-                    self._conn_type_map[i - 1] = self._conn_type_map.pop(i)
-            self._conn_type_map.pop(self.tab_widget.count(), None)
-            if tab in self._sessions:
-                self._sessions.remove(tab)
+    def _close_tab(self, uid):
+        debug(f"_close_tab uid={uid}")
+        info = self._uid_info.get(uid)
+        if info is None:
+            return
+        idx = info["tab_idx"]
+        tab = self.tab_widget.widget(idx) if 0 <= idx < self.tab_widget.count() else None
+        if tab:
+            tab.terminal.disconnect()
+            info["conn"].disconnect()
+        saved_name = info.get("saved_name")
+        if saved_name:
+            self.session_panel.update_saved_status(saved_name, "disconnected")
+        self.color_tab_bar.remove_tab(idx)
+        self.tab_widget.removeTab(idx)
+        # Re-index _tab_idx_to_uid: shift entries after removed idx down
+        del self._tab_idx_to_uid[idx]
+        for i in range(idx + 1, self.tab_widget.count() + 1):
+            if i in self._tab_idx_to_uid:
+                self._tab_idx_to_uid[i - 1] = self._tab_idx_to_uid.pop(i)
+        # If the uid had a _conn_type_map entry, clean it
+        if idx in self._conn_type_map:
+            del self._conn_type_map[idx]
+        for i in range(idx + 1, self.tab_widget.count() + 1):
+            if i in self._conn_type_map:
+                self._conn_type_map[i - 1] = self._conn_type_map.pop(i)
+        self._conn_type_map.pop(self.tab_widget.count(), None)
+        # Update _uid_info for shifted tabs
+        del self._uid_info[uid]
+        for u, v in list(self._uid_info.items()):
+            if v["tab_idx"] > idx:
+                v["tab_idx"] -= 1
+                self._tab_idx_to_uid[v["tab_idx"]] = u
+        if tab in self._sessions:
+            self._sessions.remove(tab)
             if self.tab_widget.count() == 0:
                 self.status_bar.set_status("Ready", "#6c7086")
             else:
@@ -923,8 +883,10 @@ class MainWindow(QMainWindow):
         """
 
     def _disconnect_all(self):
-        for i in range(self.tab_widget.count() - 1, -1, -1):
-            self._close_tab(i)
+        # Close from the last tab backward – collect uids first since _close_tab mutates _uid_info
+        uids = list(self._uid_info.keys())
+        for uid in reversed(uids):
+            self._close_tab(uid)
 
     def _save_current_session(self):
         tab = self.tab_widget.currentWidget()
@@ -934,6 +896,11 @@ class MainWindow(QMainWindow):
         cfg = tab.connection.config
         name = cfg.get("host", tab.connection.display_name)
         save_session(name, cfg)
+        # Don't duplicate in the saved list
+        for sname, _, _ in self.session_panel._saved_items:
+            if sname == name:
+                self.status_bar.set_status(f"Session saved: {name}", "#a6e3a1")
+                return
         self.session_panel.add_saved_session(name, cfg.get("type", "ssh"))
         self.status_bar.set_status(f"Session saved: {name}", "#a6e3a1")
 

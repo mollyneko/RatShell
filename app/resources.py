@@ -1,5 +1,5 @@
 APP_NAME = "Frtty Pro"
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.3.0"
 ORG_NAME = "RatStudio"
 
 import os
